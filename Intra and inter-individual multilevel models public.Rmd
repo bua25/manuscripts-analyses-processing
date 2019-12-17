@@ -1,0 +1,742 @@
+---
+title: "Between and Within-level Variations in Delta-Beta Synchrony"
+author: "Berenice Anaya"
+date: "8/21/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+List of necessary packages
+```{r}
+list.of.packages <- c("tidyverse", "psych", "ggplot2","RColorBrewer","gcookbook", "lme4","nlme",
+                      "effects", "backports", "interactions", "corrplot", "lmerTest")
+```
+
+```{r, include=FALSE}
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+# Loading packages
+lapply(list.of.packages, require, character.only = TRUE)
+```
+
+
+# Data Preparation
+
+Reading the Person-level data
+```{r}
+path="C:/Users/bua25/Documents/BRAIN project/SecondbySecond/"
+setwd(path)
+
+#questionnaires
+QST<-read.csv("BRAINquestionnaires.csv", header = T)
+QST<-QST[, c(1,32:34,36,38,40,43,154,208)]
+colnames(QST)[1]<-"id"
+
+#Demographics
+Demo<-read.csv("BRAINS_Demographics.csv", header = T)
+Demo<-Demo[, c(1,4,5,25)]
+colnames(Demo)[1]<-"id"
+
+#Social Reticence and Dyad ids
+dyad<- read.csv("BehComp.csv", header = T)
+dID<-read.csv("BLNdyadIds.csv", header =T)
+
+#Mergin person-level variables
+Pdata<-merge(Demo, QST, by="id")
+```
+
+
+
+The person level data include a larger number of participants, who provided BIQ data but were either not enrolled in the study, or were not part of the Baseline wave.
+Next we narrow the Person level data to the number of participants who actually have repeated measures of EEG
+
+Second-by-second level data (T= 1-284)
+```{r}
+#reading repeated EEG power data
+DBs<-read.csv("DBsecbysec.csv", header = T)
+
+#adding variable for number of segments
+DBs<- DBs%>%
+ dplyr::group_by(id)%>%
+  dplyr::add_tally()
+
+#subseting the segment variable as unique to each participant
+EEGseg<- DBs%>%
+  dplyr::select(id, n) %>% unique()
+#merging this subset into the Pdata to reduce to the number of actual participants with EEG data
+Pdata<-merge(Pdata, EEGseg, by="id")
+Pdata<-Pdata[, c(1,5:14)]
+#Pdata<-Pdata[-51,]
+
+enrolled<-read.csv("BRAINSenrolledCorrectNumbers.csv")
+Pdata<-merge(enrolled, Pdata, by="id")
+Pdata<-Pdata[-89,]
+```
+
+
+
+Person level data now contains all the participants who also have data for the EEG data
+```{r}
+Pdata$ScaredSoc.c <- scale(Pdata$SCARED_P_psocphf_P_BLN, center=TRUE, scale=FALSE)
+Pdata$ScaredSep.c <- scale(Pdata$SCARED_P_psepax_P_BLN, center=TRUE,scale=FALSE)
+Pdata$ScaredGen.c <- scale(Pdata$SCARED_P_pgenax_P_BLN, center=TRUE,scale=FALSE)
+Pdata$ScaredTot.c <- scale(Pdata$SCARED_P_psctotal_P_BLN, center=TRUE,scale=FALSE)
+Pdata$BIQ.c <- scale(Pdata$Total_BIQ, center = TRUE, scale = FALSE)
+
+
+describe(Pdata)
+```
+
+
+Between- and within- components
+
+We now split the time-varying predictor into “trait” (between-person differences) and “state” (within-person deviations) components. Specifically, the reapeated variables of Delta and Beta power are split into two varaibles: Delta_trait is the sample-mean centered between-person component, and Delta_state is the person-centered within-person component.
+```{r}
+#Person-level Delta
+FDelta_imeans <- DBs %>% 
+                  group_by(id) %>%
+  dplyr::summarise(FDelta_trait=mean(FrontalDelta, na.rm=TRUE))
+                  
+
+CDelta_imeans <- DBs %>% 
+                  group_by(id) %>% 
+                  dplyr::summarize(CDelta_trait=mean(CentralDelta, na.rm=TRUE))
+
+PDelta_imeans <- DBs %>% 
+                  group_by(id) %>% 
+                  dplyr::summarize(PDelta_trait=mean(ParietalDelta, na.rm=TRUE))
+
+
+#merging into person-level file
+Pdata <- merge(Pdata, FDelta_imeans, by="id")  
+Pdata <- merge(Pdata, CDelta_imeans, by="id") 
+Pdata <- merge(Pdata, PDelta_imeans, by="id") 
+
+#getting rid of duplicate case
+Pdata<-Pdata[-51,]
+
+#make centered versions of the person-level scores
+Pdata$FDelta_trait_c <- scale(Pdata$FDelta_trait,center=TRUE,scale=FALSE)
+Pdata$CDelta_trait_c <- scale(Pdata$CDelta_trait,center=TRUE,scale=FALSE)
+Pdata$PDelta_trait_c <- scale(Pdata$PDelta_trait,center=TRUE,scale=FALSE)
+
+#describe person-level data
+describe(Pdata)
+
+
+
+#Repeating the same for Beta power
+#Person-level Delta
+FBeta_imeans <- DBs %>% 
+                  group_by(id) %>% 
+                  dplyr::summarize(FBeta_trait=mean(FrontalBeta, na.rm=TRUE))
+
+CBeta_imeans <- DBs %>% 
+                  group_by(id) %>% 
+                  dplyr::summarize(CBeta_trait=mean(CentralBeta, na.rm=TRUE))
+
+PBeta_imeans <- DBs %>% 
+                  group_by(id) %>% 
+                  dplyr::summarize(PBeta_trait=mean(ParietalBeta, na.rm=TRUE))
+
+
+#merging into person-level file
+Pdata <- merge(Pdata, FBeta_imeans, by="id")  
+Pdata <- merge(Pdata, CBeta_imeans, by="id") 
+Pdata <- merge(Pdata, PBeta_imeans, by="id") 
+
+#make centered versions of the person-level scores
+Pdata$FBeta_trait_c <- scale(Pdata$FBeta_trait,center=TRUE,scale=FALSE)
+Pdata$CBeta_trait_c <- scale(Pdata$CBeta_trait,center=TRUE,scale=FALSE)
+Pdata$PBeta_trait_c <- scale(Pdata$PBeta_trait,center=TRUE,scale=FALSE)
+
+#describe person-level data
+describe(Pdata)
+
+```
+
+
+Making state variables in long data (as deviations from uncentered trait variable)
+```{r}
+#merging person-level data into daily data
+DBlong <- merge(DBs,Pdata,by="id")
+
+#calculating state variables for Delta
+DBlong$FDelta_state <- DBlong$FrontalDelta - DBlong$FDelta_trait
+DBlong$CDelta_state <- DBlong$CentralDelta - DBlong$CDelta_trait
+DBlong$PDelta_state <- DBlong$ParietalDelta - DBlong$PDelta_trait
+
+#calculating state variables for Beta
+DBlong$FBeta_state <- DBlong$FrontalBeta - DBlong$FBeta_trait
+DBlong$CBeta_state <-  DBlong$CentralBeta - DBlong$CBeta_trait
+DBlong$PBeta_state <-  DBlong$ParietalBeta - DBlong$PBeta_trait
+
+#describing data
+describe(DBlong)
+```
+
+# Descriptive analyses of Delta and Beta power
+
+We now computing power means in a wide dataset, to assess mean differences in EEG power across regions, demographic variables, and task condition
+```{r}
+
+func <- function(DBlong)
+{
+  return(data.frame(FD = mean(DBlong$FrontalDelta),
+                    CD = mean(DBlong$CentralDelta),
+                    PD = mean(DBlong$ParietalDelta),
+                    FB = mean(DBlong$FrontalBeta),
+                    CB = mean(DBlong$CentralBeta),
+                    PB = mean(DBlong$ParietalBeta)))
+}
+library(plyr)
+Power<-ddply(DBlong, .(id, condition), func)
+
+#checking the condition variable
+table(Power$condition)
+#recoding the wrong labels
+Power$condition[Power$condition=="L_"] <- "CL"
+Power$condition[Power$condition=="P_"] <- "OP"
+```
+
+Analyses of Variance (ANOVAs) testing EEG power differences across eyes-open/ eyes-closed conditions
+```{r}
+#Delta across regions
+summary(aov(FD ~ condition + 
+              Error(id/condition), data=Power))
+
+summary(aov(CD ~ condition + 
+              Error(id/condition), data=Power))
+summary(aov(PD ~ condition + 
+              Error(id/condition), data=Power))
+#Beta across regions
+summary(aov(FB ~ condition + 
+              Error(id/condition), data=Power))
+
+summary(aov(CB ~ condition + 
+              Error(id/condition), data=Power))
+summary(aov(PB ~ condition + 
+              Error(id/condition), data=Power))
+```
+
+
+
+We now melt or shape this data set by region, in order to test power differences across regions with a repeated mmeasures ANOVA
+```{r}
+#melting by region
+Power<- Power %>%
+  group_by(id)%>%
+  dplyr::summarise(mean(FD),
+                   mean(CD),
+                   mean(PD),
+                   mean(FB),
+                   mean(CB),
+                   mean(PB))
+
+demovars<- Pdata[, c("id","Gender","Ethnicity","age.BLNinyears","BI","Total_BIQ")]
+Power<-merge(Power,demovars, by="id")
+
+colnames(Power)<-c("id","Delta_F","Delta_C", "Delta_P","Beta_F","Beta_C", "Beta_P","Gender",
+                   "Eth","Age","BI","TotalBIQ")
+
+#removing extra row that participant 3165 creates
+Power<-Power[-48,]
+  
+powerLong<- reshape(Power,
+                    timevar = "BrainRegion",
+                    varying = c("Delta_F","Delta_C", "Delta_P","Beta_F","Beta_C", "Beta_P"),
+                    idvar = "id",
+                    sep = "_",
+                    direction = "long")
+```
+
+
+Testing BI, gender, and ethnicity differences
+```{r}
+#Differences in Delta power
+summary(aov(Delta ~ BrainRegion*Gender + BrainRegion*TotalBIQ, data=powerLong)) #sig between BI, higher for BI and higher for Boys
+#means
+describeBy(powerLong$Delta, group = powerLong$Gender)
+describeBy(powerLong$Delta, group = powerLong$BI)
+describeBy(powerLong$Delta, group = powerLong$BrainRegion)
+#ethnicity
+summary(lm(Delta ~ BrainRegion*Eth, data=powerLong, na.action = na.exclude)) #not sig between ethnic groups
+
+#Differences in Beta power
+summary(aov(Beta ~ BrainRegion*Gender + BrainRegion*TotalBIQ, data=powerLong)) #sig between BI, higher for BI and for boys
+#means
+describeBy(powerLong$Beta, group = powerLong$Gender)
+describeBy(powerLong$Beta, group = powerLong$BI)
+describeBy(powerLong$Beta, group=powerLong$BrainRegion)
+#ethnicity
+summary(lm(Beta ~ BrainRegion*Eth, data=powerLong, na.action = na.exclude)) #not sig between ethnic groups
+```
+
+We now compute mean level stability of Delta and Beta power across regions
+```{r}
+#Delta
+print(corr.test(Power[,c(2:4)], 
+                use = "pairwise",method="pearson",adjust="holm", alpha=.05,ci=TRUE), 
+      short=FALSE)
+cor.test(Power$Delta_F, Power$Delta_C, method = "pearson")
+#visual
+pairs.panels(Power[,c(2:4)])
+
+#Beta
+print(corr.test(Power[,c(5:7)], 
+                        use = "pairwise",method="pearson",adjust="holm", alpha=.05,ci=TRUE), 
+              short=FALSE)
+pairs.panels(Power[,c(5:7)])
+```
+
+
+# Delta-Beta synchrony overtime
+Before examining inter and intraindividual variability, we examine the effect of time (in seconds) spent in the resting state task on delta-beta synchrony.
+```{r}
+
+Bc<-lmeControl(maxIter = 100, msMaxIter = 100, tolerance = 1e-6, niterEM = 50,
+              msMaxEval = 400,
+              msTol = 1e-7, msVerbose = FALSE,
+              returnObject = FALSE, gradHess = TRUE, apVar = TRUE,
+              .relStep = .Machine$double.eps^(1/3), minAbsParApVar = 0.05,
+              opt = "optim")
+
+#frontal
+model_time.f <- lme(FDelta_state ~ 1 + FBeta_state + seconds +
+                      FBeta_state:seconds,
+                    random = ~ 1 + FBeta_state + seconds |id,
+                    data = DBlong, 
+                    control = Bc,
+                    na.action = na.exclude)
+summary(model_time.f)
+
+#central
+model_time.c <- lme(CDelta_state ~ 1 + CBeta_state + seconds +
+                      CBeta_state:seconds,
+                    random = ~ 1 + CBeta_state + seconds |id,
+                    data = DBlong, 
+                    control = Bc,
+                    na.action = na.exclude)
+summary(model_time.c)
+
+
+#parietal
+model_time.p <- lme(PDelta_state ~ 1 + PBeta_state + seconds +
+                      PBeta_state:seconds,
+                    random = ~ 1 + PBeta_state + seconds |id,
+                    data = DBlong, 
+                    control = Bc,
+                    na.action = na.exclude)
+summary(model_time.p)
+```
+
+
+# Variability in Delta power
+
+Unconditional means models reveal how much individual variation is the outcome measures, as estimated by the ICC. We ran these models on Delta power, which was the variable placed on the outcome side of the equation. This choice was arbitrary, as we are interested in the synchrony of delta and beta power, so either Delta or Beta could have been placed on the outcome. 
+```{r}
+#Frontal
+model0_fit <- lmer(formula = FrontalDelta ~ 1 + (1|id), 
+              data=DBlong,
+              na.action=na.exclude)
+summary(model0_fit)
+VarCorr(model0_fit)
+RandomEffects <- as.data.frame(VarCorr(model0_fit))
+RandomEffects
+ICC_between <- RandomEffects[1,4]/(RandomEffects[1,4]+RandomEffects[2,4]) 
+ICC_between
+```
+From the unconditional means model, the ICC was calculated, which indicated that of the total variance in Frontal Delta power, 21.79% is attributable to between-person variation whereas 78.21% is attributatable to within-person variation.
+
+```{r}
+#Central
+model0_fit <- lmer(formula = CentralDelta ~ 1 + (1|id), 
+              data=DBlong,
+              na.action=na.exclude)
+summary(model0_fit)
+VarCorr(model0_fit)
+RandomEffects <- as.data.frame(VarCorr(model0_fit))
+RandomEffects
+ICC_between <- RandomEffects[1,4]/(RandomEffects[1,4]+RandomEffects[2,4]) 
+ICC_between
+```
+For Central Delta power 41.73% is attributable to between-person variation and only 58.27% attributable to within person variation
+
+```{r}
+#Parietal Delta
+model0_fit <- lmer(formula = ParietalDelta ~ 1 + (1|id), 
+              data=DBlong,
+              na.action=na.exclude)
+summary(model0_fit)
+VarCorr(model0_fit)
+RandomEffects <- as.data.frame(VarCorr(model0_fit))
+RandomEffects
+ICC_between <- RandomEffects[1,4]/(RandomEffects[1,4]+RandomEffects[2,4]) 
+ICC_between
+```
+
+For Parietal Delta power 45.86% is attributable to between-person variation and only 54.14% attributable to within person variation
+
+
+
+# Between and within-person differences
+
+Multilevel models examining Between and within-person differences in Delta~Beta synchrony
+Model for Frontal region
+```{r}
+model1_fit <- lmer(formula = FrontalDelta ~ 1 + seconds + FBeta_trait_c + 
+                      FBeta_state + FBeta_state:FBeta_trait_c +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+
+
+#Visual
+ggplot(data=DBlong, aes(x=FBeta_state, y=FDelta_state, group=factor(id), color=FBeta_trait_c), legend=FALSE) +
+  geom_smooth(method=lm, se=FALSE, fullrange=FALSE, lty=1, size=.7) +
+  scale_color_viridis_c("Trait Beta Power")+
+  geom_smooth(aes(group=1), method=lm, se=FALSE, fullrange=FALSE, lty=1, size=1.5, color="black") +
+  xlab("Beta Power State") + ylab("Predicted State Delta Power") +
+  theme_classic() +
+  theme(axis.title=element_text(size=18),
+        axis.text=element_text(size=14),
+        plot.title=element_text(size=18, hjust=.5)) +
+  ggtitle("Within-Person Delta-Beta Synchrony")
+
+```
+
+Central synchrony model
+```{r}
+model1_fit <- lmer(formula = CentralDelta ~ 1 + seconds + CBeta_trait_c + 
+                      CBeta_state + CBeta_trait_c:CBeta_state +
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+Parietal synchrony 
+```{r}
+model1_fit <- lmer(formula = ParietalDelta ~ 1 + seconds + PBeta_trait_c + 
+                      PBeta_state + PBeta_trait_c:PBeta_state +
+                      (1 + PBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+
+# Delta-Beta Synchrony and Behavioral Inhibition
+Multilevel models examining if and how between person differences in BI are related to trait and state-level synchrony
+
+
+Frontal synchrony and Continuous BI
+```{r}
+model1_fit <- lmer(formula = FrontalDelta ~ 1 + FBeta_trait_c + FBeta_state + BIQ.c +
+                     FBeta_trait_c:BIQ.c + FBeta_state:BIQ.c + FBeta_trait_c:FBeta_state +
+                     FBeta_trait_c:FBeta_state:BIQ.c +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+Central synchrony and BIQ
+```{r}
+model1_fit <- lmer(formula = CentralDelta ~ 1 + CBeta_trait_c + CBeta_state + BIQ.c +
+                     CBeta_trait_c:BIQ.c + CBeta_state:BIQ.c + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:BIQ.c+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+
+Parietal synchrony and BIQ
+```{r}
+model1_fit <- lmer(formula = ParietalDelta ~ 1 + PBeta_trait_c + PBeta_state + BIQ.c +
+                     PBeta_trait_c:BIQ.c + PBeta_state:BIQ.c + PBeta_trait_c:PBeta_state + 
+                     PBeta_trait_c:PBeta_state:BIQ.c+
+                      (1 + PBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+
+
+# Delta-Beta synchrony and BI temperament profiles
+Frontal synchrony and BI
+```{r}
+DBlong$BI<-as.factor(DBlong$BI)
+model1_fit <- lmer(formula = FrontalDelta ~ 1 + FBeta_trait_c + FBeta_state + BI +
+                     FBeta_trait_c:BI + FBeta_state:BI + FBeta_trait_c:FBeta_state +
+                     FBeta_trait_c:FBeta_state:BI +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+Central synchrony and BI
+```{r}
+model1_fit <- lmer(formula = CentralDelta ~ 1 + CBeta_trait_c + CBeta_state + BI +
+                     CBeta_trait_c:BI + CBeta_state:BI + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:BI+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+# Visualization of state-level synchrony and BI at central region
+Here we show a synchrony pattern for a BI child vs. a BN child along with a simple slopes graph of the interaction
+```{r}
+model3a_fit <- lme4::lmer(formula = CentralDelta ~ 1 + CBeta_trait_c + CBeta_state + BI +
+                     CBeta_trait_c:BI + CBeta_state:BI + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:BI+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model3a_fit)
+
+ggplot(data = DBlong, aes(x=CBeta_state, y=CentralDelta, color=BI))+
+  geom_smooth(method="lm", fullrange=TRUE, na.rm = T, se=F)+
+  scale_color_viridis_d("BI",end = .9)+
+  xlab("State-Level Beta Power") + ylab("Delta Power")+
+  theme_classic()+
+  theme(axis.title=element_text(size=16),
+        axis.text=element_text(size=14),
+        strip.text=element_text(size=14))
+
+ggplot(data = DBlong, aes(x=PBeta_state, y=ParietalDelta, color=BI))+
+  geom_smooth(method="lm", fullrange=TRUE, na.rm = T, se=F)+
+  scale_color_viridis_d("BI",end = .9)+
+  xlab("State-Level Beta Power") + ylab("Delta Power")+
+  theme_classic()+
+  theme(axis.title=element_text(size=16),
+        axis.text=element_text(size=14),
+        strip.text=element_text(size=14))
+  
+
+```
+
+
+Parietal synchrony and BI
+```{r}
+model1_fit <- lmer(formula = ParietalDelta ~ 1 + PBeta_trait_c + PBeta_state + BI +
+                     PBeta_trait_c:BI + PBeta_state:BI + PBeta_trait_c:PBeta_state + 
+                     PBeta_trait_c:PBeta_state:BI+
+                      (1 + PBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+
+
+Visualizing synchrony and BI
+```{r}
+DBlong$BI<-as.factor(DBlong$BI)
+library(dplyr)
+
+DBlong%>%
+  dplyr::group_by(id)%>%
+  ggplot(aes(x=FrontalBeta,y=FrontalDelta, color=BI, shape=BI)) +
+  geom_point(size=4) +
+  scale_shape_manual(values=c(1,4))+
+  scale_color_viridis_d("BI",end = .9)+
+  stat_smooth(method="lm", fullrange=TRUE, na.rm = T) +
+  xlab("Beta Power") + ylab("Delta Power") + 
+  theme_classic()+
+  theme(axis.title=element_text(size=16),
+        axis.text=element_text(size=14),
+        strip.text=element_text(size=14))+
+  facet_wrap(.~BI)
+```
+
+
+# Delta-Beta Synchrony and social anxiety
+Multilevel models examining if and how between person differences in Social Anxiety are related to within or between-person synchrony
+
+Social Anxiety and Frontal synchrony
+```{r}
+model1_fit <- lmer(formula = FrontalDelta ~ 1 + FBeta_trait_c + FBeta_state + BIQ.c + ScaredSoc.c +
+                     FBeta_trait_c:ScaredSoc.c + FBeta_state:ScaredSoc.c + FBeta_trait_c:FBeta_state +
+                     FBeta_trait_c:FBeta_state:ScaredSoc.c +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+
+Social Anxiety and Central synchrony
+```{r}
+model1_fit <- lmer(formula = CentralDelta ~ 1  + CBeta_trait_c + CBeta_state + BIQ.c + ScaredSoc.c +
+                     CBeta_trait_c:ScaredSoc.c + CBeta_state:ScaredSoc.c + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:ScaredSoc.c+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+Social Anxiety and Parietal synchrony
+```{r}
+model1_fit <- lmer(formula = ParietalDelta ~ 1 + PBeta_trait_c + PBeta_state + BIQ.c +ScaredSoc.c +
+                     PBeta_trait_c:ScaredSoc.c + PBeta_state:ScaredSoc.c + PBeta_trait_c:PBeta_state + 
+                     PBeta_trait_c:PBeta_state:ScaredSoc.c+
+                      (1 + PBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+```
+
+
+
+# Specificity of social anxiety at Frontal and Central Regions
+
+Frontal synchrony 
+```{r}
+#separation anxiety
+model1_fit <- lmer(formula = FrontalDelta ~ 1  + FBeta_trait_c + FBeta_state + ScaredSep.c +
+                     FBeta_trait_c:ScaredSep.c + FBeta_state:ScaredSep.c + FBeta_trait_c:FBeta_state +
+                     FBeta_trait_c:FBeta_state:ScaredSep.c +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+
+#general anxiety
+model1_fitG <- lmer(formula = FrontalDelta ~ 1  + FBeta_trait_c + FBeta_state + ScaredGen.c +
+                     FBeta_trait_c:ScaredGen.c + FBeta_state:ScaredGen.c + FBeta_trait_c:FBeta_state +
+                     FBeta_trait_c:FBeta_state:ScaredGen.c +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fitG)
+ 
+```
+
+Central synchrony
+```{r}
+#separation anxiety
+model1_fit <- lmer(formula = CentralDelta ~ 1 + CBeta_trait_c + CBeta_state + ScaredSep.c +
+                     CBeta_trait_c:ScaredSep.c + CBeta_state:ScaredSep.c + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:ScaredSep.c+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fit)
+
+#general anxiety
+model1_fitG <- lmer(formula = CentralDelta ~ 1  + CBeta_trait_c + CBeta_state + ScaredGen.c +
+                     CBeta_trait_c:ScaredGen.c + CBeta_state:ScaredGen.c + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:ScaredGen.c+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model1_fitG)
+```
+
+# Visualization of social anxiety effects
+
+After testing the Social anxiety specificity to the Frontal region, we can plot these slopes to see individual differences across our sample
+
+```{r, echo=FALSE}
+ggplot(data=DBlong[which(DBlong$id <= 3097),], aes(x=FBeta_state,y=FrontalDelta, color=SCARED_P_psocphf_P_BLN)) +
+  geom_point() +
+  scale_color_viridis_c()+
+  stat_smooth(method="lm", fullrange=TRUE, na.rm = T) +
+  xlab("Individual Variation in Beta Power") + ylab("Delta Power") + 
+  facet_wrap( ~ id, scales = "free") +
+  theme_classic()+
+  theme(axis.title=element_text(size=16),
+        axis.text=element_text(size=14),
+        strip.text=element_text(size=14))
+```
+
+
+We can also plot our sample-level effects for Central power
+```{r, echo=FALSE}
+DBlong<-DBlong%>%
+  group_by(id) %>%
+  dplyr::mutate(SAcat=mean(SCARED_P_psocphf_P_BLN, na.rm=TRUE))
+
+DBlong$SAcat<-cut(DBlong$SAcat, c(0,4,13))
+
+
+                  
+ggplot(data=DBlong, aes(x=CBeta_trait,y=CDelta_trait, color=SAcat)) +
+  geom_point(size=4) +
+  scale_color_viridis_d("Social Anxiety",end = .9)+
+  stat_smooth(method="lm", fullrange=TRUE, na.rm = T) +
+  xlab("Trait Level Variation in Beta Power") + ylab("Delta Power") + 
+  theme_classic()+
+  theme(axis.title=element_text(size=16),
+        axis.text=element_text(size=14),
+        strip.text=element_text(size=14))
+```
+
+
+Johnson-Neyman plot of the interactions
+```{r}
+#inspecting data structure to vectorize matrix variables
+str(DBlong)
+DBlong$ScaredSoc.c<-as.vector(DBlong$ScaredSoc.c)
+
+#Re-running model under lm4 command
+model2a_fit <- lme4::lmer(formula = FrontalDelta ~ 1 + seconds + FBeta_trait_c + FBeta_state + SCARED_P_psocphf_P_BLN +
+                     FBeta_trait_c:SCARED_P_psocphf_P_BLN + FBeta_state:SCARED_P_psocphf_P_BLN + FBeta_trait_c:FBeta_state +
+                     FBeta_trait_c:FBeta_state:SCARED_P_psocphf_P_BLN +
+                      (1 + FBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model2a_fit)
+```
+
+
+
+Get confidence intervals for both fixed and random effects
+```{r}
+confint(model2a_fit)
+  
+# Save predicted scores
+DBlong$pred_m2a <- predict(model2a_fit)
+
+# Fit statistics  
+AIC(logLik(model2a_fit)) 
+BIC(logLik(model2a_fit))
+logLik(logLik(model2a_fit))
+```
+
+
+Plotting and probing the simple slopes (within-person association between Beta Power states and Delta Power) across the full range of the moderator (Social Anxiety).
+
+```{r, echo=FALSE}
+johnson_neyman(model=model2a_fit, pred=FBeta_state, modx=SCARED_P_psocphf_P_BLN, 
+               sig.color = "#350a63", insig.color = "#69c90e", alpha = 0.016,
+               title = "State-Level Delta-Beta Synchrony Across Levels of Anxiety")
+
+interact_plot(model2a_fit, pred = FBeta_state, modx = SCARED_P_psocphf_P_BLN, interval = FALSE, plot.points = TRUE, colors = "Qual3", x.label = "Beta Power individual states", y.label = "Delta Power", legend.main = "Anxiety Scores", )
+
+```
+
+Fitting the between-level differences
+```{r}
+model2a_fit <- lme4::lmer(formula = CentralDelta ~ 1 + seconds + CBeta_trait_c + CBeta_state + SCARED_P_psocphf_P_BLN + 
+                     CBeta_trait_c:SCARED_P_psocphf_P_BLN + CBeta_state:SCARED_P_psocphf_P_BLN + CBeta_trait_c:CBeta_state + 
+                     CBeta_trait_c:CBeta_state:SCARED_P_psocphf_P_BLN+
+                      (1 + CBeta_state|id), 
+                    data=DBlong,
+                    na.action=na.exclude)
+summary(model2a_fit)
+```
